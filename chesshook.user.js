@@ -1621,9 +1621,10 @@
       key: namespace + '_puzzlemode',
       type: 'checkbox',
       display: 'Solves puzzles: ',
-      description: 'Solves puzzles automatically',
+      description: 'Puzzle mode (Note: Not fully implemented for Lichess yet)',
       value: false,
       callback: () => {
+        addToConsole('[Note] Puzzle mode is not yet fully implemented for Lichess');
         vs.setConfigValue('whichEngine', 'none');
         vs.setConfigValue('autoMove', false);
       }
@@ -1633,7 +1634,7 @@
       key: namespace + '_apipuzzlemode',
       type: 'checkbox',
       display: 'Use the API for puzzles: ',
-      description: 'Uses the API to solve puzzles',
+      description: 'Uses the API to solve puzzles (Not available for Lichess)',
       value: false,
       showOnlyIf: () => vs.queryConfigKey(namespace + '_puzzlemode')
     })
@@ -2103,14 +2104,14 @@
       addToConsole('External engine is: ' + externalEngineName);
       externalEngineWorker.postMessage({ type: 'GETMOVE', payload: { fen: fen, go: goCommand } });
     } else if (vs.queryConfigKey(namespace + '_whichengine') === 'random') {
-      // For Lichess, we need to use betafish to get legal moves since we don't have board.game.getLegalMoves()
-      // Just pick a random piece and try a random move
-      addToConsole('Random engine not fully supported on Lichess, using betafish instead');
+      // Random engine: use betafish but this is a known limitation
+      // In the future, we could implement random move selection from betafish legal moves
+      addToConsole('[Note] Random engine uses betafish on Lichess - true random not available without legal move API');
       betafishWorker.postMessage({ type: 'FEN', payload: fen });
       betafishWorker.postMessage({ type: 'GETMOVE' });
     } else if (vs.queryConfigKey(namespace + '_whichengine') === 'cccp') {
-      // CCCP engine relies on chess.com's board.game API, so use betafish for Lichess
-      addToConsole('CCCP engine not supported on Lichess, using betafish instead');
+      // CCCP engine is not available on Lichess - inform user and use betafish
+      addToConsole('[Note] CCCP engine not available on Lichess - using betafish as fallback');
       betafishWorker.postMessage({ type: 'FEN', payload: fen });
       betafishWorker.postMessage({ type: 'GETMOVE' });
     }
@@ -2228,7 +2229,9 @@
 
     // Calculate delay with human-like timing
     const fen = lichessCurrentFEN;
-    const moveNumber = parseInt(fen.split(' ')[5]) || 1;
+    // Safely parse fullmove number from FEN (index 5), with fallback
+    const fenParts = fen ? fen.split(' ') : [];
+    const moveNumber = (fenParts.length >= 6 && !isNaN(parseInt(fenParts[5]))) ? parseInt(fenParts[5]) : 1;
     const timeLeft = 60000; // Default time, could be enhanced to get actual time
     const delay = calculateHumanLikeDelay(fen, moveNumber, timeLeft);
 
