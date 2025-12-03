@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name        Chesshook Lite
-// @include    	https://www.chess.com/*
+// @name        Lichesshook Lite
+// @include    	https://lichess.org/*
 // @grant       none
 // @require     https://raw.githubusercontent.com/0mlml/chesshook/master/betafish.js
 // @require     https://raw.githubusercontent.com/0mlml/vasara/main/vasara.js
 // @version     1.0
 // @author      0mlml (Enhanced by AI)
-// @description A simplified version of Chesshook with core features and a modern UI.
+// @description A simplified version of Chesshook adapted for Lichess with core features and a modern UI.
 // @run-at      document-end
 // ==/UserScript==
 
@@ -18,13 +18,13 @@
     try {
       if (typeof vasara === 'function') {
         vs = vasara();
-        console.log('[Chesshook Lite] Vasara library initialized successfully');
+        console.log('[Lichesshook Lite] Vasara library initialized successfully');
       } else {
-        console.warn('[Chesshook Lite] Vasara function not available, retrying...');
+        console.warn('[Lichesshook Lite] Vasara function not available, retrying...');
         setTimeout(initializeVasara, 100);
       }
     } catch (error) {
-      console.error('[Chesshook Lite] Failed to initialize vasara library:', error);
+      console.error('[Lichesshook Lite] Failed to initialize vasara library:', error);
       // Retry after a delay
       setTimeout(initializeVasara, 500);
     }
@@ -34,7 +34,98 @@
   initializeVasara();
   
   // Add console message about external error filtering
-  console.log('[Chesshook Lite] External error filtering enabled - chess.com errors will be suppressed');
+  console.log('[Lichesshook Lite] External error filtering enabled - external errors will be suppressed');
+  
+  // Lichess state management
+  let lichessCurrentFEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  let lichessPlayerColor = null; // 'white' or 'black'
+  let lichessGameId = null;
+  
+  // WebSocket interception for Lichess
+  const setupWebSocketInterception = () => {
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+      const ws = protocols ? new originalWebSocket(url, protocols) : new originalWebSocket(url);
+      
+      // Intercept incoming messages
+      ws.addEventListener('message', (event) => {
+        try {
+          // Lichess sends messages that may be multiple JSON objects or prefixed with numbers
+          const data = event.data;
+          if (typeof data === 'string') {
+            // Try to parse as JSON directly
+            try {
+              const parsed = JSON.parse(data);
+              handleLichessMessage(parsed);
+            } catch {
+              // Lichess sometimes prefixes messages with a number, try to extract JSON
+              const jsonMatch = data.match(/\{.*\}/);
+              if (jsonMatch) {
+                try {
+                  const parsed = JSON.parse(jsonMatch[0]);
+                  handleLichessMessage(parsed);
+                } catch (e) {
+                  // Not valid JSON, ignore
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // Ignore parsing errors
+        }
+      });
+      
+      return ws;
+    };
+    // Preserve prototype
+    window.WebSocket.prototype = originalWebSocket.prototype;
+    window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+    window.WebSocket.OPEN = originalWebSocket.OPEN;
+    window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+    window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+  };
+  
+  const handleLichessMessage = (data) => {
+    if (!data) return;
+    
+    // Handle move messages
+    if (data.t === 'move' && data.d) {
+      const moveData = data.d;
+      if (moveData.fen) {
+        lichessCurrentFEN = moveData.fen;
+        if (vs && vs.queryConfigKey(namespace + '_debugmode')) {
+          console.log('[Lichesshook] FEN updated:', lichessCurrentFEN);
+        }
+      }
+      if (moveData.uci) {
+        if (vs && vs.queryConfigKey(namespace + '_debugmode')) {
+          console.log('[Lichesshook] Move detected:', moveData.uci, moveData.san);
+        }
+      }
+    }
+    
+    // Handle game start/full state
+    if (data.t === 'full' && data.d) {
+      if (data.d.game && data.d.game.fen) {
+        lichessCurrentFEN = data.d.game.fen;
+      }
+      // Detect player color
+      if (data.d.player && data.d.player.color) {
+        lichessPlayerColor = data.d.player.color;
+        if (vs && vs.queryConfigKey(namespace + '_debugmode')) {
+          console.log('[Lichesshook] Playing as:', lichessPlayerColor);
+        }
+      }
+    }
+    
+    // Handle fen updates in other message types
+    if (data.d && data.d.fen && !data.t) {
+      lichessCurrentFEN = data.d.fen;
+    }
+  };
+  
+  // Initialize WebSocket interception early
+  setupWebSocketInterception();
 
   const createConfigWindow = () => {
     const configWindow = vs.generateConfigWindow({
@@ -112,7 +203,7 @@
 
   const createSettingsWindow = () => {
     const settingsWindow = vs.generateModalWindow({
-      title: 'Chesshook Settings',
+      title: 'Lichesshook Settings',
       unique: true,
       width: 550,
       height: 500
@@ -567,7 +658,7 @@
   const consoleQueue = [];
   const createConsoleWindow = () => {
     const consoleWindow = vs.generateModalWindow({
-      title: 'Chesshook Console',
+      title: 'Lichesshook Console',
       resizable: true,
       unique: true,
       tag: namespace + '_consolewindowtag',
@@ -817,7 +908,7 @@
     addConsoleLineElement(text);
   }
 
-  const namespace = 'chesshook';
+  const namespace = 'lichesshook';
 
   window[namespace] = {};
 
@@ -1113,123 +1204,11 @@
     originalXHRSend.apply(this, arguments);
   };
 
+  // handleInterception - Not used for Lichess (chess.com API interception)
+  // Keeping as a stub for potential future Lichess API interception
   const handleInterception = (req, res) => {
-    const urlPath = new URL(req.url).pathname;
-
-    switch (urlPath) {
-      case '/rpc/chesscom.puzzles.v1.PuzzleService/GetNextRated':
-        if (vs.queryConfigKey(namespace + '_puzzlemode')) {
-          if (res.userPuzzle && res.userPuzzle.puzzle) {
-            const puzzle = res.userPuzzle.puzzle;
-
-            const fenMatch = puzzle.pgn.match(/\[FEN "(.+?)"\]/);
-            const fen = fenMatch ? fenMatch[1] : null;
-
-            const moves = [];
-            const rawMoves = [];
-            if (puzzle.moves && Array.isArray(puzzle.moves)) {
-              for (const moveObj of puzzle.moves) {
-                if (moveObj.move) {
-                  rawMoves.push(moveObj.move);
-                  const from = squareToAlgebraic(moveObj.move.from);
-                  const to = squareToAlgebraic(moveObj.move.to);
-
-                  const move = {
-                    from: from,
-                    to: to,
-                    promotion: null,
-                    drop: null,
-                  };
-
-                  if (moveObj.move.promotionPieceType) {
-                    const promotionMap = {
-                      'PROMOTION_PIECE_TYPE_QUEEN': 'q',
-                      'PROMOTION_PIECE_TYPE_ROOK': 'r',
-                      'PROMOTION_PIECE_TYPE_BISHOP': 'b',
-                      'PROMOTION_PIECE_TYPE_KNIGHT': 'n'
-                    };
-
-                    move.promotion = promotionMap[moveObj.move.promotionPieceType] || null;
-                  }
-
-                  moves.push(move);
-                }
-              }
-            }
-
-            if (vs.queryConfigKey(namespace + '_apipuzzlemode')) {
-              submitPuzzleSolution(puzzle.legacyPuzzleId, rawMoves);
-            } else {
-              puzzleQueue.push({
-                fen: fen,
-                moves: moves,
-                tagged: false,
-              });
-            }
-          }
-        }
-        break;
-      case /\/service\/battle\/games\/.*\/puzzles/.test(urlPath) ? urlPath : '':
-        if (vs.queryConfigKey(namespace + '_puzzlemode') && res.puzzles && Array.isArray(res.puzzles)) {
-          for (const puzzle of res.puzzles) {
-            if (puzzle.initialFen) {
-              const moves = [];
-
-              if (puzzle.firstMove) {
-                const decodedMoves = decodeTCN(puzzle.firstMove);
-                if (decodedMoves.length > 0) {
-                  moves.push(...decodedMoves);
-                }
-              }
-
-              if (puzzle.secureMoves && Array.isArray(puzzle.secureMoves)) {
-                for (const secureMove of puzzle.secureMoves) {
-                  if (secureMove.move) {
-                    const decodedMoves = decodeTCN(secureMove.move);
-                    if (decodedMoves.length > 0) {
-                      moves.push(...decodedMoves);
-                    }
-                  }
-
-                  if (secureMove.counter) {
-                    const decodedCounters = decodeTCN(secureMove.counter);
-                    if (decodedCounters.length > 0) {
-                      moves.push(...decodedCounters);
-                    }
-                  }
-                }
-              }
-
-              puzzleQueue.push({
-                fen: puzzle.initialFen,
-                moves: moves,
-                tagged: false,
-              });
-            }
-          }
-        }
-        break;
-      case '/callback/tactics/rated/next':
-        if (vs.queryConfigKey(namespace + '_puzzlemode')) {
-          puzzleQueue.push({
-            fen: res.initialFen,
-            moves: decodeTCN(res.tcnMoveList),
-            tagged: false,
-          });
-        }
-        break;
-      case '/callback/tactics/challenge/puzzles':
-        if (vs.queryConfigKey(namespace + '_puzzlemode')) {
-          for (const puzzle of res.puzzles) {
-            puzzleQueue.push({
-              fen: puzzle.initialFen,
-              moves: decodeTCN(puzzle.tcnMoveList),
-              tagged: false,
-            });
-          }
-        }
-        break;
-    }
+    // Lichess uses WebSocket for game data, not REST API interception
+    // The WebSocket interception is handled by setupWebSocketInterception()
   }
 
   const init = () => {
@@ -1267,7 +1246,7 @@
         `;
         document.body.appendChild(statusElement);
       }
-      statusElement.textContent = 'Chesshook Lite: Loading...';
+      statusElement.textContent = 'Lichesshook Lite: Loading...';
     } catch (error) {
       console.warn(`[${namespace}] Could not create status indicator:`, error);
     }
@@ -1527,9 +1506,12 @@
       description: 'The hotkey to clear arrows',
       value: 'Alt+L',
       action: () => {
-        const board = document.querySelector('wc-chess-board');
-        if (!board) return;
-        board.game.markings.removeAll();
+        // Clear custom arrows on Lichess
+        const svgLayer = document.querySelector('.cg-custom-svgs g');
+        if (svgLayer) {
+          const arrows = svgLayer.querySelectorAll('.lichesshook-arrow');
+          arrows.forEach(arrow => arrow.remove());
+        }
       }
     });
 
@@ -1940,7 +1922,7 @@
     try {
       const statusElement = document.getElementById(namespace + '_status');
       if (statusElement) {
-        statusElement.textContent = 'Chesshook Lite: Ready!';
+        statusElement.textContent = 'Lichesshook Lite: Ready!';
         statusElement.style.background = 'rgba(0,255,0,0.9)';
         // Hide status after 3 seconds
         setTimeout(() => {
@@ -1955,8 +1937,8 @@
 
     addToConsole(`Loaded! This is version ${GM_info.script.version}`);
     addToConsole(`Github: https://github.com/0mlml/chesshook`);
-    addToConsole(`Note: External errors (Sentry, AudioContext, etc.) are from chess.com and not related to this script.`);
-    console.log('[Chesshook Lite] Script loaded successfully! Use Alt+K for config, Alt+O for settings, Alt+M for auto move, Alt+C for console, Alt+L for tools');
+    addToConsole(`Note: This is a Lichess adaptation of Chesshook.`);
+    console.log('[Lichesshook Lite] Script loaded successfully! Use Alt+K for config, Alt+O for settings, Alt+M for auto move, Alt+C for console, Alt+L for tools');
     
     // Handle external errors gracefully
     handleExternalErrors();
@@ -2048,76 +2030,39 @@
 
   const mergeMoveToUCI = (move) => move.from + move.to + (move.promotion ? move.promotion : '');
 
+  // CCCP engine is not supported on Lichess as it requires board.game API
+  // This is kept as a stub for compatibility
   const cccpEngine = () => {
-    const board = document.querySelector('wc-chess-board');
-
-    const legalMoves = board.game.getLegalMoves();
-
-    if (legalMoves.length === 0) return;
-
-    const checkmates = legalMoves.filter(m => m.san.includes('#'));
-
-    if (checkmates.length > 0) {
-      return mergeMoveToUCI(checkmates[0]);
-    }
-
-
-    const checks = legalMoves.filter(m => m.san.includes('+'));
-    const captureMoves = legalMoves.filter(m => m.san.includes('x'));
-
-    const goodCaptureExists = captureMoves.some(m => {
-      const capturedValue = getPieceValue(m.captured, true);
-      return capturedValue > 4 || getPieceValue(m.piece, true) < capturedValue;
-    });
-
-    if (checks.length > 0 && !goodCaptureExists) {
-      return mergeMoveToUCI(checks[0]);
-    }
-
-    if (captureMoves.length > 0) {
-      return mergeMoveToUCI(captureMoves.sort((a, b) => (getPieceValue(b.captured) - getPieceValue(b.piece) + getPieceValue(b.captured) * 0.1) - (getPieceValue(a.captured) - getPieceValue(b.piece) + getPieceValue(a.captured) * 0.1))[0]);
-    }
-
-    const pushes = legalMoves.sort((a, b) => {
-      let scoreA = getPieceValue(a.piece, true);
-      let scoreB = getPieceValue(b.piece, true);
-
-      const columnScores = { 'a': -1, 'b': 0, 'c': 1, 'd': 3, 'e': 3, 'f': 1, 'g': 0, 'h': -1 };
-
-      scoreA += columnScores[a.to[0]];
-      scoreB += columnScores[b.to[0]];
-
-      const scorePush = (to, isWhite) => {
-        const toRow = parseInt(to[1]);
-
-        return isWhite ? toRow : 9 - toRow;
-      }
-
-      scoreA += scorePush(a.to, a.color === 1);
-      scoreB += scorePush(b.to, b.color === 1);
-
-      a.score = scoreA;
-      b.score = scoreB;
-      return scoreB - scoreA;
-    });
-
-    return mergeMoveToUCI(pushes[0]);
+    addToConsole('CCCP engine is not supported on Lichess');
+    return null;
   }
 
   const isMyTurn = () => {
-    const board = document.querySelector('wc-chess-board');
-    const fen = board.game.getFEN();
-
+    const fen = lichessCurrentFEN;
+    if (!fen) return false;
+    
+    const turnColor = fen.split(' ')[1]; // 'w' or 'b'
+    
     if (vs.queryConfigKey(namespace + '_playingas') !== 'both') {
-      if ((vs.queryConfigKey(namespace + '_playingas') === 'white' && fen.split(' ')[1] === 'b') ||
-        (vs.queryConfigKey(namespace + '_playingas') === 'black' && fen.split(' ')[1] === 'w')) {
+      if ((vs.queryConfigKey(namespace + '_playingas') === 'white' && turnColor === 'b') ||
+        (vs.queryConfigKey(namespace + '_playingas') === 'black' && turnColor === 'w')) {
         return false;
       }
     }
 
     if (vs.queryConfigKey(namespace + '_playingas') === 'auto') {
-      const playingAs = board.game.getPlayingAs() === 1 ? 'w' : board.game.getPlayingAs() === 2 ? 'b' : null;
-      return playingAs === null || fen.split(' ')[1] === playingAs;
+      // Use detected player color from WebSocket
+      if (lichessPlayerColor) {
+        const myColor = lichessPlayerColor === 'white' ? 'w' : 'b';
+        return turnColor === myColor;
+      }
+      // Fallback: detect from board orientation
+      const board = document.querySelector('.cg-wrap');
+      if (board) {
+        const isFlipped = board.classList.contains('orientation-black');
+        const myColor = isFlipped ? 'b' : 'w';
+        return turnColor === myColor;
+      }
     }
 
     return true;
@@ -2127,11 +2072,10 @@
 
   let engineLastKnownFEN = null;
   const getEngineMove = () => {
-    const board = document.querySelector('wc-chess-board');
-
-    const fen = board.game.getFEN();
+    // Use FEN captured from WebSocket for Lichess
+    const fen = lichessCurrentFEN;
     if (!fen || engineLastKnownFEN === fen) return;
-    engineLastKnownFEN = board.game.getFEN();
+    engineLastKnownFEN = fen;
 
     if (!isMyTurn()) return;
 
@@ -2153,62 +2097,54 @@
         addToConsole('External engine go command is invalid. Please check the config.');
         return;
       } else if (vs.queryConfigKey(namespace + '_externalengineautogocommand')) {
-        goCommand = 'go';
-        if (board?.game?.timeControl && board.game.timeControl.get() && board.game.timestamps.get) {
-          const increment = board.game.timeControl.get().increment;
-          const baseTime = board.game.timeControl.get().baseTime;
-          let whiteTime = baseTime
-          let blackTime = baseTime;
-          const timestamps = board.game.timestamps.get();
-          for (let i in timestamps) {
-            if (i % 2 === 0) {
-              whiteTime -= timestamps[i] * 100;
-              whiteTime += increment;
-            } else {
-              blackTime -= timestamps[i] * 100;
-              blackTime += increment;
-            }
-          }
-          goCommand += ` wtime ${whiteTime} btime ${blackTime} winc ${increment} binc ${increment}`;
-        } else {
-          goCommand += ' depth 20';
-        }
+        // For Lichess, use depth-based search as we don't have easy access to time controls
+        goCommand = 'go depth ' + (vs.queryConfigKey(namespace + '_enginedepthlimit') || 20);
       }
       addToConsole('External engine is: ' + externalEngineName);
       externalEngineWorker.postMessage({ type: 'GETMOVE', payload: { fen: fen, go: goCommand } });
     } else if (vs.queryConfigKey(namespace + '_whichengine') === 'random') {
-      const legalMoves = document.querySelector('wc-chess-board').game.getLegalMoves()
-      const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)];
-
-      addToConsole(`Random computed move: ${randomMove.san}`);
-      handleEngineMove(randomMove.from + randomMove.to + (randomMove.promotion ? randomMove.promotion : ''));
+      // For Lichess, we need to use betafish to get legal moves since we don't have board.game.getLegalMoves()
+      // Just pick a random piece and try a random move
+      addToConsole('Random engine not fully supported on Lichess, using betafish instead');
+      betafishWorker.postMessage({ type: 'FEN', payload: fen });
+      betafishWorker.postMessage({ type: 'GETMOVE' });
     } else if (vs.queryConfigKey(namespace + '_whichengine') === 'cccp') {
-      const move = cccpEngine();
-      if (!move) return;
-
-      addToConsole(`CCCP computed move: ${move}`);
-      handleEngineMove(move);
+      // CCCP engine relies on chess.com's board.game API, so use betafish for Lichess
+      addToConsole('CCCP engine not supported on Lichess, using betafish instead');
+      betafishWorker.postMessage({ type: 'FEN', payload: fen });
+      betafishWorker.postMessage({ type: 'GETMOVE' });
     }
   }
 
   const calculateDOMSquarePosition = (square, fromDoc = true) => {
-    const board = document.getElementsByTagName('wc-chess-board')[0];
-    if (!board?.game) return;
+    // For Lichess, find the cg-container or cg-board element
+    const container = document.querySelector('cg-container');
+    const board = document.querySelector('cg-board');
+    if (!container || !board) return null;
 
-    const { left, top, width } = board.getBoundingClientRect();
+    const { left, top, width, height } = container.getBoundingClientRect();
     const squareWidth = width / 8;
-    const correction = squareWidth / 2;
+    const squareHeight = height / 8;
+    const correctionX = squareWidth / 2;
+    const correctionY = squareHeight / 2;
 
     const coords = coordToYX(square);
-    if (!board.game.getOptions().flipped) {
+    
+    // Check board orientation from the wrapper class
+    const wrapper = document.querySelector('.cg-wrap');
+    const isFlipped = wrapper && wrapper.classList.contains('orientation-black');
+    
+    if (!isFlipped) {
+      // White's perspective (normal)
       return {
-        x: left + squareWidth * coords[0] - correction,
-        y: top + width - squareWidth * coords[1] + correction,
+        x: left + squareWidth * coords[0] - correctionX,
+        y: top + height - squareHeight * coords[1] + correctionY,
       };
     } else {
+      // Black's perspective (flipped)
       return {
-        x: left + width - squareWidth * coords[0] + correction,
-        y: top + squareWidth * coords[1] - correction,
+        x: left + width - squareWidth * coords[0] + correctionX,
+        y: top + squareHeight * coords[1] - correctionY,
       };
     }
   }
@@ -2263,17 +2199,15 @@
 
   // Enhanced engine move handler with human-like behavior
   const handleEngineMove = (uciMove, engineScore = 0) => {
-    const board = document.querySelector('wc-chess-board');
-    if (!board?.game) return false;
-
-    if (!vs.queryConfigKey(namespace + '_renderthreats')) board.game.markings.removeAll();
+    const board = document.querySelector('cg-board');
+    if (!board) return false;
 
     // Store move in history
     const moveInfo = {
       move: uciMove,
       score: engineScore,
       timestamp: Date.now(),
-      fen: board.game.getFEN()
+      fen: lichessCurrentFEN
     };
     moveHistory.push(moveInfo);
     if (moveHistory.length > 50) moveHistory.shift(); // Keep last 50 moves
@@ -2284,18 +2218,8 @@
       updateEngineScoreDisplay(engineScore);
     }
 
-    // Create move arrow
-    const marking = { 
-      type: 'arrow', 
-      data: { 
-        color: vs.queryConfigKey(namespace + '_enginemovecolor'), 
-        from: uciMove.substring(0, 2), 
-        to: uciMove.substring(2, 4) 
-      } 
-    };
-    if (handleMoveLastKnownMarking) board.game.markings.removeOne(handleMoveLastKnownMarking);
-    board.game.markings.addOne(marking);
-    handleMoveLastKnownMarking = marking;
+    // For Lichess, we draw arrows using SVG
+    drawMoveArrow(uciMove.substring(0, 2), uciMove.substring(2, 4));
 
     // Check if we should play the move
     if (!autoMoveEnabled && !vs.queryConfigKey(namespace + '_automove')) {
@@ -2303,8 +2227,8 @@
     }
 
     // Calculate delay with human-like timing
-    const fen = board.game.getFEN();
-    const moveNumber = parseInt(fen.split(' ')[5]);
+    const fen = lichessCurrentFEN;
+    const moveNumber = parseInt(fen.split(' ')[5]) || 1;
     const timeLeft = 60000; // Default time, could be enhanced to get actual time
     const delay = calculateHumanLikeDelay(fen, moveNumber, timeLeft);
 
@@ -2312,7 +2236,7 @@
     if (vs.queryConfigKey(namespace + '_automovehumanlike') && 
         Math.random() * 100 < vs.queryConfigKey(namespace + '_automoveblunderchance')) {
       // Play a suboptimal move occasionally
-      const alternativeMoves = getAlternativeMoves(board.game.getFEN());
+      const alternativeMoves = getAlternativeMoves(lichessCurrentFEN);
       if (alternativeMoves.length > 1) {
         const randomIndex = Math.floor(Math.random() * alternativeMoves.length);
         uciMove = alternativeMoves[randomIndex];
@@ -2320,35 +2244,151 @@
     }
 
     resolveAfterMs(delay).then(() => {
-      if (['/play/computer', '/analysis'].some(p => document.location.pathname.startsWith(p))) {
-        board.game.move(uciMove);
-      } else {
+      // For Lichess, we need to simulate drag and drop on the cg-board
+      const fromPos = calculateDOMSquarePosition(uciMove.substring(0, 2));
+      const toPos = calculateDOMSquarePosition(uciMove.substring(2, 4));
+      
+      if (!fromPos || !toPos) {
+        addToConsole('Error: Could not calculate square positions');
+        return;
+      }
+
+      // Find the piece element at the from position
+      const cgBoard = document.querySelector('cg-board');
+      if (!cgBoard) return;
+
+      // Simulate mouse events for drag and drop
+      cgBoard.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: fromPos.x,
+        clientY: fromPos.y,
+        button: 0
+      }));
+
+      // Small delay for drag
+      setTimeout(() => {
+        cgBoard.dispatchEvent(new MouseEvent('mousemove', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: toPos.x,
+          clientY: toPos.y
+        }));
+
+        cgBoard.dispatchEvent(new MouseEvent('mouseup', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: toPos.x,
+          clientY: toPos.y,
+          button: 0
+        }));
+        
+        // Handle promotion if needed
         if (uciMove.length > 4) {
-          board.game.move({
-            from: uciMove.substring(0, 2),
-            to: uciMove.substring(2, 4),
-            promotion: uciMove.substring(4, 5),
-            animate: false,
-            userGenerated: true
-          });
-        } else {
-          const fromPos = calculateDOMSquarePosition(uciMove.substring(0, 2));
-          const toPos = calculateDOMSquarePosition(uciMove.substring(2, 4));
-          board.dispatchEvent(new PointerEvent('pointerdown', {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            clientX: fromPos.x,
-            clientY: fromPos.y,
-          }));
-          board.dispatchEvent(new PointerEvent('pointerup', {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            clientX: toPos.x,
-            clientY: toPos.y,
-          }));
+          const promotionPiece = uciMove.substring(4, 5);
+          setTimeout(() => {
+            handlePromotion(promotionPiece);
+          }, 100);
         }
+      }, 50);
+    });
+  }
+  
+  // Draw move arrow on Lichess board
+  const drawMoveArrow = (from, to) => {
+    const color = vs.queryConfigKey(namespace + '_enginemovecolor') || '#77ff77';
+    
+    // Find the custom SVG layer
+    const svgLayer = document.querySelector('.cg-custom-svgs g');
+    if (!svgLayer) return;
+    
+    // Clear previous arrows
+    const existingArrows = svgLayer.querySelectorAll('.lichesshook-arrow');
+    existingArrows.forEach(arrow => arrow.remove());
+    
+    // Calculate arrow coordinates
+    const fromCoords = coordToYX(from);
+    const toCoords = coordToYX(to);
+    
+    // Check board orientation
+    const wrapper = document.querySelector('.cg-wrap');
+    const isFlipped = wrapper && wrapper.classList.contains('orientation-black');
+    
+    let x1, y1, x2, y2;
+    if (!isFlipped) {
+      x1 = (fromCoords[0] - 0.5) - 4;
+      y1 = (8 - fromCoords[1] + 0.5) - 4;
+      x2 = (toCoords[0] - 0.5) - 4;
+      y2 = (8 - toCoords[1] + 0.5) - 4;
+    } else {
+      x1 = (8 - fromCoords[0] + 0.5) - 4;
+      y1 = (fromCoords[1] - 0.5) - 4;
+      x2 = (8 - toCoords[0] + 0.5) - 4;
+      y2 = (toCoords[1] - 0.5) - 4;
+    }
+    
+    // Create arrow line
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('class', 'lichesshook-arrow');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', '0.15');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('marker-end', 'url(#lichesshook-arrowhead)');
+    line.setAttribute('opacity', '0.8');
+    
+    // Create arrowhead marker if not exists
+    let defs = svgLayer.parentElement.querySelector('defs');
+    if (!defs) {
+      defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      svgLayer.parentElement.insertBefore(defs, svgLayer);
+    }
+    
+    if (!defs.querySelector('#lichesshook-arrowhead')) {
+      const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+      marker.setAttribute('id', 'lichesshook-arrowhead');
+      marker.setAttribute('markerWidth', '4');
+      marker.setAttribute('markerHeight', '4');
+      marker.setAttribute('refX', '2.5');
+      marker.setAttribute('refY', '1.5');
+      marker.setAttribute('orient', 'auto');
+      
+      const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      polygon.setAttribute('points', '0 0, 3 1.5, 0 3');
+      polygon.setAttribute('fill', color);
+      
+      marker.appendChild(polygon);
+      defs.appendChild(marker);
+    }
+    
+    svgLayer.appendChild(line);
+  }
+  
+  // Handle pawn promotion
+  const handlePromotion = (piece) => {
+    // Lichess shows a promotion dialog, we need to click the right piece
+    const promotionPieces = {
+      'q': 'queen',
+      'r': 'rook',
+      'b': 'bishop',
+      'n': 'knight'
+    };
+    
+    const pieceName = promotionPieces[piece.toLowerCase()];
+    if (!pieceName) return;
+    
+    // Try to find and click the promotion piece
+    const promotionSquares = document.querySelectorAll('square[data-coord]');
+    promotionSquares.forEach(sq => {
+      const piece = sq.querySelector('piece');
+      if (piece && piece.classList.contains(pieceName)) {
+        sq.click();
       }
     });
   }
@@ -2536,14 +2576,15 @@
         document.body.appendChild(statusElement);
       }
       
-      const board = document.querySelector('wc-chess-board');
+      const board = document.querySelector('cg-board');
       const engine = vs.queryConfigKey(namespace + '_whichengine');
       const autoMove = vs.queryConfigKey(namespace + '_automove') || autoMoveEnabled;
       
-      let status = `🎯 Chesshook Lite v${GM_info.script.version}\n`;
+      let status = `🎯 Lichesshook Lite v${GM_info.script.version}\n`;
       status += `🤖 Engine: ${engine}\n`;
       status += `⚡ Auto Move: ${autoMove ? 'ON' : 'OFF'}\n`;
       status += `♟️ Board: ${board ? 'Found' : 'Not Found'}\n`;
+      status += `🎨 Playing as: ${lichessPlayerColor || 'Unknown'}\n`;
       status += `📄 Page: ${document.location.pathname}`;
       
       statusElement.textContent = status;
@@ -2552,149 +2593,63 @@
     }
   };
 
+  // Puzzle API functions - Note: These are not yet adapted for Lichess puzzles
+  // Lichess puzzles use a different API structure
   const requestNextPuzzle = () => {
-    addToConsole(`[${namespace}] Requesting next puzzle`);
-
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', 'https://www.chess.com/rpc/chesscom.puzzles.v1.PuzzleService/GetNextRated', true);
-
-      xhr.setRequestHeader('accept', 'application/json');
-      xhr.setRequestHeader('accept-language', 'en-US,en;q=0.9');
-      xhr.setRequestHeader('content-type', 'application/json');
-      xhr.withCredentials = true;
-
-      xhr.onload = function () {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const result = JSON.parse(xhr.responseText);
-
-            if (result && result.userPuzzle && result.userPuzzle.puzzle) {
-              addToConsole(`[${namespace}] Successfully retrieved next puzzle: ${result.userPuzzle.puzzle.legacyPuzzleId}`);
-              resolve(result);
-            } else {
-              const errorMsg = `Failed to get next puzzle: ${result.error || 'No puzzle data in response'}`;
-              addToConsole(`[${namespace}] ${errorMsg}`);
-              reject(new Error(errorMsg));
-            }
-          } catch (e) {
-            addToConsole(`[${namespace}] Error parsing response:`, e);
-            reject(e);
-          }
-        } else {
-          addToConsole(`[${namespace}] Request failed:`, xhr.status, xhr.statusText);
-          reject(new Error(`Request failed: ${xhr.status} ${xhr.statusText}`));
-        }
-      };
-
-      xhr.onerror = function () {
-        addToConsole(`[${namespace}] Network error occurred`);
-        reject(new Error('Network error'));
-      };
-
-      xhr.ontimeout = function () {
-        addToConsole(`[${namespace}] Request timed out`);
-        reject(new Error('Request timed out'));
-      };
-
-      xhr.send('{}');
-    });
+    addToConsole(`[${namespace}] Puzzle API is not yet implemented for Lichess`);
+    return Promise.reject(new Error('Lichess puzzle API not implemented'));
   }
 
+  // Puzzle submission - not yet adapted for Lichess
   const submitPuzzleSolution = async (puzzleId, moves) => {
-    try {
-      const payload = {
-        legacyPuzzleId: puzzleId,
-        moves: moves,
-        attemptDuration: `0.2s`
-      };
-
-      switch(vs.queryConfigKey(namespace + '_apipuzzletimemode')) {
-        case 'hour':
-          payload.attemptDuration = `${(3600 + Math.random() * 1800).toFixed(3)}s`;
-          break;
-        case 'legit':
-          payload.attemptDuration = `${(15 + Math.random() * 30).toFixed(3)}s`;
-          break;
-        case 'zero':
-          payload.attemptDuration = `${0.1 + Math.random() * 0.3}s`;
-          break;
-      }
-
-      addToConsole(`[${namespace}] Submitting solution for puzzle ${puzzleId}`);
-
-      return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', 'https://www.chess.com/rpc/chesscom.puzzles.v1.PuzzleService/SubmitRatedSolution', true);
-
-        xhr.setRequestHeader('accept', 'application/json');
-        xhr.setRequestHeader('accept-language', 'en-US,en;q=0.9');
-        xhr.setRequestHeader('content-type', 'application/json');
-
-        xhr.onload = function () {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const result = JSON.parse(xhr.responseText);
-              addToConsole(`[${namespace}] Successfully submitted solution for puzzle ${puzzleId}. ELO: ${result.userRatings[0].rating} (+${result.userRatings[0].ratingChange})`);
-              requestNextPuzzle();
-              resolve(result);
-            } catch (e) {
-              addToConsole(`[${namespace}] Error parsing response:`, e);
-              reject(e);
-            }
-          } else {
-            addToConsole(`[${namespace}] XHR request failed:`, xhr.status, xhr.statusText, xhr.responseText);
-            reject(new Error(`XHR request failed: ${xhr.status} ${xhr.statusText}`));
-          }
-        };
-
-        xhr.onerror = function () {
-          addToConsole(`[${namespace}] Network error occurred`);
-          reject(new Error('Network error'));
-        };
-
-        xhr.ontimeout = function () {
-          addToConsole(`[${namespace}] Request timed out`);
-          reject(new Error('Request timed out'));
-        };
-
-        xhr.send(JSON.stringify(payload));
-      });
-    } catch (error) {
-      addToConsole(`[${namespace}] Error submitting puzzle solution:`, error);
-    }
+    addToConsole(`[${namespace}] Puzzle solution submission is not yet implemented for Lichess`);
+    return Promise.reject(new Error('Lichess puzzle solution API not implemented'));
   };
 
   const handlePuzzleMove = (moveObj) => {
-    const board = document.querySelector('wc-chess-board');
-    if (!board?.game) return false;
+    const board = document.querySelector('cg-board');
+    if (!board) return false;
 
-    if (moveObj.promotion) {
-      board.game.move({
-        from: moveObj.from,
-        to: moveObj.to,
-        promotion: moveObj.promotion,
-        animate: false,
-        userGenerated: true
-      });
-    } else {
-      const fromPos = calculateDOMSquarePosition(moveObj.from);
-      const toPos = calculateDOMSquarePosition(moveObj.to);
-      board.dispatchEvent(new PointerEvent('pointerdown', {
+    const fromPos = calculateDOMSquarePosition(moveObj.from);
+    const toPos = calculateDOMSquarePosition(moveObj.to);
+    
+    if (!fromPos || !toPos) return false;
+
+    // Simulate mouse events for drag and drop on Lichess
+    board.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: fromPos.x,
+      clientY: fromPos.y,
+      button: 0
+    }));
+
+    setTimeout(() => {
+      board.dispatchEvent(new MouseEvent('mousemove', {
         bubbles: true,
         cancelable: true,
         view: window,
-        clientX: fromPos.x,
-        clientY: fromPos.y,
+        clientX: toPos.x,
+        clientY: toPos.y
       }));
-      board.dispatchEvent(new PointerEvent('pointerup', {
+
+      board.dispatchEvent(new MouseEvent('mouseup', {
         bubbles: true,
         cancelable: true,
         view: window,
         clientX: toPos.x,
         clientY: toPos.y,
+        button: 0
       }));
-    }
+      
+      // Handle promotion if needed
+      if (moveObj.promotion) {
+        setTimeout(() => {
+          handlePromotion(moveObj.promotion);
+        }, 100);
+      }
+    }, 50);
   }
 
   let requeueLastGamePath = null;
@@ -2732,10 +2687,11 @@
   window[namespace].getPuzzleQueue = () => puzzleQueue;
 
   const manualPuzzleHandler = () => {
-    const board = document.querySelector('wc-chess-board');
+    const board = document.querySelector('cg-board');
     if (!board) return;
 
-    const currentFEN = board.game.getFEN();
+    // Use the FEN captured from WebSocket
+    const currentFEN = lichessCurrentFEN;
 
     for (let i = 0; i < puzzleQueue.length; i++) {
       const puzzle = puzzleQueue[i];
@@ -2746,10 +2702,6 @@
 
       if (puzzle.tagged) {
         if (lastPuzzleFEN && fuzzyFensEqual(currentFEN, lastPuzzleFEN)) return;
-
-        if (document.querySelector("#board-animation").children.length) {
-          return;
-        }
 
         while (puzzle.moves.length > 0 && !playerTurn) {
           puzzle.moves.shift();
@@ -2782,14 +2734,9 @@
 
   // Enhanced update loop with new features
   const updateLoop = () => {
-    const board = document.querySelector('wc-chess-board');
+    const board = document.querySelector('cg-board');
 
-    if (!board?.game) return;
-
-    // Game over handling
-    if (board.game.getPositionInfo().gameOver) {
-      externalEngineWorker.postMessage({ type: 'STOP' });
-    }
+    if (!board) return;
 
     // Engine move calculation
     if (vs.queryConfigKey(namespace + '_whichengine') !== 'none') {
@@ -2830,6 +2777,6 @@
   // Start initialization with a small delay to ensure everything is ready
   setTimeout(initializeScript, 100);
   } catch (error) {
-    console.error('[Chesshook Lite] Script initialization error:', error);
+    console.error('[Lichesshook Lite] Script initialization error:', error);
   }
 })();
